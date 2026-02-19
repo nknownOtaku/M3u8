@@ -1,98 +1,47 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
-const puppeteer = require("puppeteer");
 const path = require("path");
 
 const app = express();
 
 app.use(cors());
 
-// serve static files
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 10000;
 
-let browser;
-let cookies = "";
-let userAgent = "";
 
+// browser headers (Cloudflare bypass)
+function getHeaders(referer, origin) {
 
-// launch browser
-async function initBrowser() {
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage"
-            ]
-        });
+    return {
+        "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/127.0.0.0 Safari/537.36",
 
-        const page = await browser.newPage();
+        "Accept":
+            "*/*",
 
-        userAgent = await page.evaluate(() => navigator.userAgent);
+        "Accept-Language":
+            "en-US,en;q=0.9",
 
-        await page.close();
+        "Cache-Control":
+            "no-cache",
 
-        console.log("Browser ready");
-    } catch (error) {
-        console.error("Failed to initialize browser:", error.message);
-        console.error("Make sure Chrome is installed. Run: npx puppeteer browsers install chrome");
-        process.exit(1);
-    }
-}
+        "Connection":
+            "keep-alive",
 
-initBrowser();
+        "Referer":
+            referer,
 
-
-// get cookies
-async function getCookies(url) {
-    try {
-        const page = await browser.newPage();
-
-        await page.goto(url, {
-            waitUntil: "networkidle2",
-            timeout: 60000
-        });
-
-        const ck = await page.cookies();
-
-        cookies = ck.map(c => `${c.name}=${c.value}`).join("; ");
-
-        await page.close();
-
-        return cookies;
-    } catch (error) {
-        console.error("Error getting cookies:", error.message);
-        throw error;
-    }
-}
-
-
-// fetch stream
-async function fetchStream(url, referer) {
-
-    if (!cookies)
-        await getCookies(url);
-
-    return axios({
-        method: "GET",
-        url,
-        responseType: "stream",
-        headers: {
-            "User-Agent": userAgent,
-            "Referer": referer || url,
-            "Origin": new URL(url).origin,
-            "Cookie": cookies
-        }
-    });
+        "Origin":
+            origin
+    };
 
 }
 
 
-// playlist proxy
+// fetch playlist
 app.get("/m3u8", async (req, res) => {
 
     try {
@@ -102,50 +51,66 @@ app.get("/m3u8", async (req, res) => {
         if (!url)
             return res.send("Missing url");
 
-        await getCookies(url);
+        const parsed =
+            new URL(url);
 
-        const response = await axios({
-            url,
-            headers: {
-                "User-Agent": userAgent,
-                "Cookie": cookies
-            }
-        });
+        const headers =
+            getHeaders(url, parsed.origin);
 
-        let data = response.data;
+
+        const response =
+            await axios.get(url, {
+                headers
+            });
+
+
+        let data =
+            response.data;
 
         const base =
             url.substring(0, url.lastIndexOf("/") + 1);
 
 
-        // rewrite ts segments
-        data = data.replace(
-            /^(?!#)(.*\.ts)$/gm,
-            (segment) => {
+        // rewrite segments
+        data =
+            data.replace(
+                /^(?!#)(.*)$/gm,
+                (line) => {
 
-                const absolute =
-                    segment.startsWith("http")
-                        ? segment
-                        : base + segment;
+                    if (
+                        line.endsWith(".ts") ||
+                        line.endsWith(".m4s")
+                    ) {
 
-                return `/segment?url=${encodeURIComponent(absolute)}&referer=${encodeURIComponent(url)}`;
-            }
-        );
+                        const absolute =
+                            line.startsWith("http")
+                                ? line
+                                : base + line;
+
+                        return `/segment?url=${encodeURIComponent(absolute)}&referer=${encodeURIComponent(url)}`;
+                    }
+
+                    return line;
+
+                }
+            );
 
 
         // rewrite keys
-        data = data.replace(
-            /URI="(.*?)"/g,
-            (match, keyUrl) => {
+        data =
+            data.replace(
+                /URI="(.*?)"/g,
+                (match, key) => {
 
-                const absolute =
-                    keyUrl.startsWith("http")
-                        ? keyUrl
-                        : base + keyUrl;
+                    const absolute =
+                        key.startsWith("http")
+                            ? key
+                            : base + key;
 
-                return `URI="/key?url=${encodeURIComponent(absolute)}&referer=${encodeURIComponent(url)}"`;
-            }
-        );
+                    return `URI="/key?url=${encodeURIComponent(absolute)}&referer=${encodeURIComponent(url)}"`;
+
+                }
+            );
 
 
         res.setHeader(
@@ -166,23 +131,38 @@ app.get("/m3u8", async (req, res) => {
 
 
 
-// segment proxy
+// proxy segments
 app.get("/segment", async (req, res) => {
 
     try {
 
-        const stream =
-            await fetchStream(
-                req.query.url,
-                req.query.referer
-            );
+        const url =
+            req.query.url;
+
+        const referer =
+            req.query.referer;
+
+        const parsed =
+            new URL(url);
+
+        const headers =
+            getHeaders(referer, parsed.origin);
+
+
+        const response =
+            await axios({
+                url,
+                headers,
+                responseType: "stream"
+            });
+
 
         res.setHeader(
             "Content-Type",
             "video/mp2t"
         );
 
-        stream.data.pipe(res);
+        response.data.pipe(res);
 
     }
     catch (err) {
@@ -195,18 +175,32 @@ app.get("/segment", async (req, res) => {
 
 
 
-// key proxy
+// proxy keys
 app.get("/key", async (req, res) => {
 
     try {
 
-        const stream =
-            await fetchStream(
-                req.query.url,
-                req.query.referer
-            );
+        const url =
+            req.query.url;
 
-        stream.data.pipe(res);
+        const referer =
+            req.query.referer;
+
+        const parsed =
+            new URL(url);
+
+        const headers =
+            getHeaders(referer, parsed.origin);
+
+
+        const response =
+            await axios({
+                url,
+                headers,
+                responseType: "stream"
+            });
+
+        response.data.pipe(res);
 
     }
     catch (err) {
@@ -224,10 +218,24 @@ app.get("/proxy", async (req, res) => {
 
     try {
 
-        const stream =
-            await fetchStream(req.query.url);
+        const url =
+            req.query.url;
 
-        stream.data.pipe(res);
+        const parsed =
+            new URL(url);
+
+        const headers =
+            getHeaders(url, parsed.origin);
+
+
+        const response =
+            await axios({
+                url,
+                headers,
+                responseType: "stream"
+            });
+
+        response.data.pipe(res);
 
     }
     catch (err) {
@@ -240,7 +248,7 @@ app.get("/proxy", async (req, res) => {
 
 
 
-// open player at root
+// open player
 app.get("/", (req, res) => {
 
     res.sendFile(
@@ -251,5 +259,5 @@ app.get("/", (req, res) => {
 
 
 app.listen(PORT, () =>
-    console.log("Server running on port " + PORT)
+    console.log("Proxy running on port " + PORT)
 );
