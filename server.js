@@ -20,24 +20,28 @@ let userAgent = "";
 
 // launch browser
 async function initBrowser() {
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ]
+        });
 
-    browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage"
-        ]
-    });
+        const page = await browser.newPage();
 
-    const page = await browser.newPage();
+        userAgent = await page.evaluate(() => navigator.userAgent);
 
-    userAgent = await page.evaluate(() => navigator.userAgent);
+        await page.close();
 
-    await page.close();
-
-    console.log("Browser ready");
-
+        console.log("Browser ready");
+    } catch (error) {
+        console.error("Failed to initialize browser:", error.message);
+        console.error("Make sure Chrome is installed. Run: npx puppeteer browsers install chrome");
+        process.exit(1);
+    }
 }
 
 initBrowser();
@@ -45,22 +49,25 @@ initBrowser();
 
 // get cookies
 async function getCookies(url) {
+    try {
+        const page = await browser.newPage();
 
-    const page = await browser.newPage();
+        await page.goto(url, {
+            waitUntil: "networkidle2",
+            timeout: 60000
+        });
 
-    await page.goto(url, {
-        waitUntil: "networkidle2",
-        timeout: 60000
-    });
+        const ck = await page.cookies();
 
-    const ck = await page.cookies();
+        cookies = ck.map(c => `${c.name}=${c.value}`).join("; ");
 
-    cookies = ck.map(c => `${c.name}=${c.value}`).join("; ");
+        await page.close();
 
-    await page.close();
-
-    return cookies;
-
+        return cookies;
+    } catch (error) {
+        console.error("Error getting cookies:", error.message);
+        throw error;
+    }
 }
 
 
