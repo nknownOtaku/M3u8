@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="UTF-8">
+<title>M3U8 Proxy Player</title>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+<style>
+
+body{
+background:#0b0f17;
+color:white;
+font-family:Arial;
+text-align:center;
+}
+
+input{
+width:70%;
+padding:12px;
+font-size:16px;
+}
+
+button{
+padding:12px;
+font-size:16px;
+background:#00ffa6;
+border:none;
+}
+
+video{
+width:90%;
+margin-top:20px;
+}
+
+</style>
+
+</head>
+<body>
+
+<h2>M3U8 Proxy Player</h2>
+
+<input id="url" placeholder="Enter m3u8 link">
+
+<button onclick="play()">Play</button>
+
+<br>
+
+<video id="video" controls autoplay></video>
+
+<script>
+
+const proxy = "/m3u8?url=";
+
+function play(){
+
+const url =
+document.getElementById("url").value;
+
+const video =
+document.getElementById("video");
+
+const proxied =
+proxy + encodeURIComponent(url);
+
+if(Hls.isSupported()){
+
+const hls = new Hls();
+
+hls.loadSource(proxied);
+
+hls.attachMedia(video);
+
+}
+else{
+
+video.src = proxied;
+
+}
+
+}
+
+</script>
+
+</body>
+</html>
