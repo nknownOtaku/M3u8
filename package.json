@@ -5,6 +5,7 @@
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
+    "postinstall": "npx puppeteer browsers install chrome",
     "start": "node server.js"
   },
   "dependencies": {
